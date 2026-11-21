@@ -12,6 +12,8 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -48,6 +50,16 @@ class MainActivity : AppCompatActivity() {
         filePathCallback = null
         if (callback != null) {
             val uri = if (result.resultCode == RESULT_OK) result.data?.data else null
+            if (uri != null) {
+                try {
+                    val flags = result.data?.flags ?: 0
+                    contentResolver.takePersistableUriPermission(
+                        uri, flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    )
+                } catch (_: Exception) { }
+                getSharedPreferences("aster_vrm", MODE_PRIVATE).edit()
+                    .putString("last_vrm_uri", uri.toString()).apply()
+            }
             callback.onReceiveValue(if (uri != null) arrayOf(uri) else null)
         }
     }
@@ -85,15 +97,32 @@ class MainActivity : AppCompatActivity() {
             override fun onShowFileChooser(webView: WebView?, callback: ValueCallback<Array<Uri>>?, params: FileChooserParams?): Boolean {
                 filePathCallback?.onReceiveValue(null)
                 filePathCallback = callback
-                val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     type = "*/*"
                     addCategory(Intent.CATEGORY_OPENABLE)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                 }
                 filePicker.launch(Intent.createChooser(intent, "Select VRM model"))
                 return true
             }
         }
-        vrmWebView.webViewClient = WebViewClient()
+        vrmWebView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                val path = request?.url?.path ?: return super.shouldInterceptRequest(view, request)
+                if (path != "/assets/last-vrm") return super.shouldInterceptRequest(view, request)
+                val saved = getSharedPreferences("aster_vrm", MODE_PRIVATE).getString("last_vrm_uri", null)
+                    ?: return WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), null)
+                return try {
+                    val stream = contentResolver.openInputStream(Uri.parse(saved))
+                    WebResourceResponse("model/gltf-binary", "binary", stream)
+                } catch (_: Exception) {
+                    WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), null)
+                }
+            }
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+            }
+        }
         vrmWebView.loadDataWithBaseURL("https://appassets.androidplatform.net/assets/", VRM_HTML, "text/html", "UTF-8", null)
     }
 
@@ -192,7 +221,7 @@ class MainActivity : AppCompatActivity() {
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;font-family:Arial;background:#eaf3ff;color:#24466d}#stage{position:absolute;inset:0}#bar{position:absolute;z-index:2;top:9px;left:9px;right:9px;display:flex;gap:8px;align-items:center}button{border:0;border-radius:10px;background:#477fb8;color:white;padding:10px 14px;font-weight:600}#file{display:none}#hint,#status{font-size:11px;background:#ffffffdf;padding:8px;border-radius:8px}#status{position:absolute;z-index:2;bottom:8px;left:9px;right:9px}</style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/","@pixiv/three-vrm":"https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.2.0/lib/three-vrm.module.js"}}</script></head>
-<body><div id="stage"></div><div id="bar"><button id="choose">Load VRM</button><input id="file" type="file" accept=".vrm,model/gltf-binary"><span id="hint">VRM 0.x / 1.0</span></div><div id="status">Starting 3D preview…</div>
+<body><div id="stage"></div><div id="bar"><button id="choose">Import VRM</button><button id="saved">Open saved</button><input id="file" type="file" accept=".vrm,model/gltf-binary"><span id="hint">VRM 0.x / 1.0</span></div><div id="status">Starting 3D preview…</div>
 <script type="module">
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
@@ -205,14 +234,19 @@ try{
  scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(30,stage.clientWidth/stage.clientHeight,.1,100);camera.position.set(0,1.35,3.2);
  scene.add(new THREE.HemisphereLight(0xffffff,0x9ab3d1,2));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(1,2,3);scene.add(key);
  const loader=new GLTFLoader();loader.register(p=>new VRMLoaderPlugin(p));
+ async function install(gltf,name){const next=gltf.userData.vrm;if(!next)throw new Error('No VRM extension found');
+  if(vrm){scene.remove(vrm.scene);VRMUtils.deepDispose(vrm.scene)}vrm=next;VRMUtils.rotateVRM0(vrm);scene.add(vrm.scene);
+  const box=new THREE.Box3().setFromObject(vrm.scene),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());vrm.scene.position.x-=center.x;vrm.scene.position.y-=box.min.y;vrm.scene.position.z-=center.z;
+  const h=Math.max(size.y,1.2);camera.position.set(0,h*.62,h*2.5);camera.lookAt(0,h*.52,0);say('Loaded: '+name+' · Tracking connected');
+ }
  document.getElementById('choose').onclick=()=>input.click();
- input.onchange=async()=>{const file=input.files&&input.files[0];if(!file)return;say('Loading '+file.name+'…');
-  try{const url=URL.createObjectURL(file);const gltf=await loader.loadAsync(url);URL.revokeObjectURL(url);const next=gltf.userData.vrm;if(!next)throw new Error('No VRM extension found');
-   if(vrm){scene.remove(vrm.scene);VRMUtils.deepDispose(vrm.scene)}vrm=next;VRMUtils.rotateVRM0(vrm);scene.add(vrm.scene);
-   const box=new THREE.Box3().setFromObject(vrm.scene),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());vrm.scene.position.x-=center.x;vrm.scene.position.y-=box.min.y;vrm.scene.position.z-=center.z;
-   const h=Math.max(size.y,1.2);camera.position.set(0,h*.62,h*2.5);camera.lookAt(0,h*.52,0);say('Loaded: '+file.name+' · Tracking connected');
-  }catch(e){say('VRM load failed: '+(e.message||e))}
+ input.onchange=async()=>{const file=input.files&&input.files[0];if(!file)return;say('Importing '+file.name+'…');
+  try{const url=URL.createObjectURL(file);const gltf=await loader.loadAsync(url);URL.revokeObjectURL(url);await install(gltf,file.name)}
+  catch(e){say('VRM load failed: '+(e.message||e))}
  };
+ async function loadSavedVrm(){say('Opening saved VRM…');try{const response=await fetch('last-vrm',{cache:'no-store'});if(!response.ok)throw new Error('No saved VRM yet. Import a model first.');const buffer=await response.arrayBuffer();loader.parse(buffer,'',gltf=>install(gltf,'Saved VRM').catch(e=>say('VRM load failed: '+e.message)),e=>say('VRM load failed: '+(e.message||e)))}catch(e){say(e.message||String(e))}}
+ document.getElementById('saved').onclick=loadSavedVrm;
+ window.loadSavedVrm=loadSavedVrm;
  function loop(t){requestAnimationFrame(loop);const dt=last?(t-last)/1000:0;last=t;if(vrm)vrm.update(dt);renderer.render(scene,camera)}loop(0);
  new ResizeObserver(()=>{const w=stage.clientWidth,h=stage.clientHeight;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h)}).observe(stage);say('3D ready · Load a VRM model');
 }catch(e){say('3D preview error: '+(e.message||e))}
