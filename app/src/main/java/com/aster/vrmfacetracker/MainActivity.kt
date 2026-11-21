@@ -67,14 +67,10 @@ class MainActivity : AppCompatActivity() {
             .build()
         val options = FaceLandmarker.FaceLandmarkerOptions.builder()
             .setBaseOptions(baseOptions)
-            .setRunningMode(RunningMode.LIVE_STREAM)
+            .setRunningMode(RunningMode.VIDEO)
             .setNumFaces(1)
             .setOutputFaceBlendshapes(true)
             .setOutputFacialTransformationMatrixes(true)
-            .setResultListener { result, _ -> updateTrackingUi(result) }
-            .setErrorListener { error -> runOnUiThread {
-                statusText.text = "Tracker error: ${error.message}"
-            } }
             .build()
         faceLandmarker = FaceLandmarker.createFromOptions(this, options)
     }
@@ -114,7 +110,8 @@ class MainActivity : AppCompatActivity() {
             val matrix = Matrix().apply { postRotate(imageProxy.imageInfo.rotationDegrees.toFloat()) }
             val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
             val mpImage = BitmapImageBuilder(rotated).build()
-            faceLandmarker?.detectAsync(mpImage, SystemClock.uptimeMillis())
+            val result = faceLandmarker?.detectForVideo(mpImage, SystemClock.uptimeMillis())
+            if (result != null) updateTrackingUi(result)
             if (rotated !== source) rotated.recycle()
             source.recycle()
         } catch (error: Exception) {
