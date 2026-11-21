@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.AsterVRMFaceTracker" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#4B86C6</item>
+        <item name="colorPrimaryVariant">#315E91</item>
+        <item name="colorSecondary">#80B7E8</item>
+        <item name="android:statusBarColor">#F5F9FF</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#F5F9FF</item>
+    </style>
+</resources>
